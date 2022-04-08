@@ -1,0 +1,8 @@
+[profile.release]
+strip = true
+
+[workspace]
+members = [
+        "rc4",
+        "rcli"
+]

@@ -1,0 +1,11 @@
+[package]
+name = "rcli"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rc4 = { path = "../rc4" }
+chacha20poly1305 = { version = "0.9.0" }
+clap = { version = "^3", features = ["derive"] }
