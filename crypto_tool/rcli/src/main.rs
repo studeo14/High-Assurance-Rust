@@ -1,12 +1,12 @@
 /// Encryption CLI
 /// Author: Steven Frederiksen
 /// Derived From: https://highassurance.rs/chp2/cli.html
-use chacha20poly1305::aead::{Aead, AeadInPlace, NewAead, Error};
+use chacha20poly1305::aead::{Aead, NewAead};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use clap::Parser;
 use std::fs::File;
 use std::io;
-use std::io::prelude::{Read, Seek, Write};
+use std::io::prelude::{Read, Write};
 
 /// File en/decryption
 #[derive(Parser, Debug)]
@@ -16,25 +16,15 @@ struct Args {
     predict_only: bool,
 
     /// Name of file
-    #[clap(short, long, value_name = "FILE_NAME", required=true)]
+    #[clap(short, long, value_name = "FILE_NAME", required = true)]
     file: String,
 
     /// En/Decryption key
-    #[clap(
-        short,
-        long,
-        required = true,
-        value_name = "KEY"
-    )]
+    #[clap(short, long, required = true, value_name = "KEY")]
     key: String,
 
     /// Nonce
-    #[clap(
-        short,
-        long,
-        required = true,
-        value_name = "NONCE"
-    )]
+    #[clap(short, long, required = true, value_name = "NONCE")]
     nonce: String,
 }
 
@@ -104,7 +94,10 @@ fn main() -> std::io::Result<()> {
             println!("Failure to process file {}", e);
         } else {
             // Overwrite the existing file check TODO
-            let mut file = File::options().write(true).open(format!("{}.enc", args.file))?;
+            let mut file = File::options()
+                .create(true)
+                .write(true)
+                .open(format!("{}.enc", args.file))?;
             file.write_all(&new_contents.unwrap())?;
         }
     }
