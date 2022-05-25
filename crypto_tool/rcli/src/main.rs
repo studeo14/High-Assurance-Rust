@@ -4,6 +4,7 @@
 use chacha20poly1305::aead::{Aead, NewAead};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use clap::Parser;
+use colored::Colorize;
 use std::fs::File;
 use std::io;
 use std::io::prelude::{Read, Write};
@@ -11,9 +12,13 @@ use std::io::prelude::{Read, Write};
 /// File en/decryption
 #[derive(Parser, Debug)]
 struct Args {
-    // Tell the tool to only predict if the given file is encrypted
+    /// Tell the tool to only predict if the given file is encrypted
     #[clap(short, long)]
     predict_only: bool,
+
+    /// Overwrite file with en/decryption result
+    #[clap(short, long)]
+    overwrite: bool,
 
     /// Name of file
     #[clap(short, long, value_name = "FILE_NAME", required = true)]
@@ -94,10 +99,22 @@ fn main() -> std::io::Result<()> {
             println!("Failure to process file {}", e);
         } else {
             // Overwrite the existing file check TODO
+            let filename = if args.overwrite {
+                println!("{}; You are overwriting {}", "WARNING".yellow(), args.file.red());
+                args.file
+            } else {
+                if encrypt {
+                    format!("{}.enc", args.file)
+                } else {
+                    format!("{}.denc", args.file)
+                }
+            };
+            println!("Writing result to {}", filename.green());
             let mut file = File::options()
                 .create(true)
+                .truncate(true)
                 .write(true)
-                .open(format!("{}.enc", args.file))?;
+                .open(filename)?;
             file.write_all(&new_contents.unwrap())?;
         }
     }
