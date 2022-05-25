@@ -53,18 +53,6 @@ fn main() -> std::io::Result<()> {
     }
     let ones_ratio = total_ones as f32 / total_bits as f32;
     let ascii_ratio = total_below_128 as f32 / contents.len() as f32;
-    println!(
-        "Distribution of ones: {}/{} ({}%)",
-        total_ones,
-        total_bits,
-        ones_ratio * 100.0
-    );
-    println!(
-        "Distribution of < 128: {}/{} ({}%)",
-        total_below_128,
-        contents.len(),
-        ascii_ratio * 100.0
-    );
 
     let encrypt = ascii_ratio >= 0.990;
 
@@ -117,6 +105,19 @@ fn main() -> std::io::Result<()> {
                 .open(filename)?;
             file.write_all(&new_contents.unwrap())?;
         }
+    } else {
+        println!(
+            "Distribution of ones: {}/{} ({}%)",
+            total_ones,
+            total_bits,
+            ones_ratio * 100.0
+        );
+        println!(
+            "Distribution of < 128: {}/{} ({}%)",
+            total_below_128,
+            contents.len(),
+            ascii_ratio * 100.0
+        );
     }
 
     Ok(())
