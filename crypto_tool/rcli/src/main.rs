@@ -1,13 +1,13 @@
 /// Encryption CLI
 /// Author: Steven Frederiksen
 /// Derived From: https://highassurance.rs/chp2/cli.html
-use chacha20poly1305::aead::{Aead, NewAead};
-use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
+use chacha20poly1305::aead::{NewAead, stream};
+use chacha20poly1305::{ChaCha20Poly1305};
 use clap::Parser;
 use colored::Colorize;
 use std::fs::File;
-use std::io;
-use std::io::prelude::{Read, Write};
+use std::io::prelude::{Write, Read, Seek};
+use anyhow::{anyhow, Result};
 
 /// File en/decryption
 #[derive(Parser, Debug)]
@@ -33,26 +33,26 @@ struct Args {
     nonce: String,
 }
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     // Open the file for read/write
-    let mut contents = Vec::new();
+    let mut buffer = [0u8; 500];
     let mut file = File::options().read(true).open(&args.file)?;
 
-    // Read the file
-    file.read_to_end(&mut contents)?;
-    let total_bits = contents.len() * 8;
+    // Read the first chunk of the file
+    let read_count = file.read(&mut buffer)?;
+    let total_bits = read_count * 8;
     let mut total_ones = 0;
     let mut total_below_128 = 0;
-    for byte in &contents {
+    for &byte in &buffer[..read_count] {
         total_ones += byte.count_ones();
-        if byte < &128 {
+        if byte < 128 {
             total_below_128 += 1;
         }
     }
     let ones_ratio = total_ones as f32 / total_bits as f32;
-    let ascii_ratio = total_below_128 as f32 / contents.len() as f32;
+    let ascii_ratio = total_below_128 as f32 / read_count as f32;
 
     let encrypt = ascii_ratio >= 0.990;
 
@@ -61,50 +61,82 @@ fn main() -> std::io::Result<()> {
         // Note:
         // Enfore length here
         if args.key.len() != 32 {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(anyhow!(
                 "Key must be 32 characters long",
             ));
         }
-        let key = Key::from_slice(args.key.as_bytes());
-        let nonce = Nonce::from_slice(args.nonce.as_bytes());
+        let key = args.key.as_bytes();
+        let nonce = args.nonce.as_bytes();
 
         // create the cipher instance
-        let cipher = ChaCha20Poly1305::new(key);
+        let cipher = ChaCha20Poly1305::new(key.as_ref().into());
+
+        // Overwrite the existing file check
+        let filename = if args.overwrite {
+            println!("{}; You are overwriting {}", "WARNING".yellow(), args.file.red());
+            args.file.clone()
+        } else {
+            if encrypt {
+                format!("{}.enc", args.file)
+            } else {
+                format!("{}.denc", args.file)
+            }
+        };
+        println!("Writing result to {}", filename.green());
+
+        let mut output_file = File::options()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(filename)?;
 
         // En/Decrypt the file
-        let new_contents = if encrypt {
-            let ciphertext = cipher.encrypt(nonce, contents.as_slice());
-            println!("Encrypted {}", args.file);
-            ciphertext
-        } else {
-            let plaintext = cipher.decrypt(nonce, contents.as_slice());
-            println!("Decrypted {}", args.file);
-            plaintext
-        };
-
-        if let Err(e) = new_contents {
-            println!("Failure to process file {}", e);
-        } else {
-            // Overwrite the existing file check TODO
-            let filename = if args.overwrite {
-                println!("{}; You are overwriting {}", "WARNING".yellow(), args.file.red());
-                args.file
-            } else {
-                if encrypt {
-                    format!("{}.enc", args.file)
+        if encrypt {
+            let mut stream_encryptor = stream::EncryptorBE32::from_aead(cipher, nonce.as_ref().into());
+            // reset file location
+            file.rewind()?;
+            let mut buffer = [0u8; 500];
+            loop {
+                let read_count = file.read(&mut buffer)?;
+                if read_count == 500 {
+                    let ciphertext = stream_encryptor
+                        .encrypt_next(buffer.as_slice())
+                        .map_err(|err| anyhow!("Encrypting {}",  err))?;
+                    output_file.write(&ciphertext)?;
                 } else {
-                    format!("{}.denc", args.file)
+                    let ciphertext = stream_encryptor
+                        .encrypt_last(&buffer[..read_count])
+                        .map_err(|err| anyhow!("Encrypting {}",  err))?;
+                    output_file.write(&ciphertext)?;
+                    break;
                 }
-            };
-            println!("Writing result to {}", filename.green());
-            let mut file = File::options()
-                .create(true)
-                .truncate(true)
-                .write(true)
-                .open(filename)?;
-            file.write_all(&new_contents.unwrap())?;
+            }
+            println!("Encrypted {}", args.file.green());
+        } else {
+            let mut stream_decryptor = stream::DecryptorBE32::from_aead(cipher, nonce.as_ref().into());
+            // reset file location
+            file.rewind()?;
+            let mut buffer = [0u8; 516];
+            loop {
+                let read_count = file.read(&mut buffer)?;
+                if read_count == 516 {
+                    let plaintext = stream_decryptor
+                        .decrypt_next(buffer.as_slice())
+                        .map_err(|err| anyhow!("Decrypting {}", err))?;
+                    output_file.write(&plaintext)?;
+                } else if read_count == 0 {
+                    break;
+                } else {
+                    let plaintext = stream_decryptor
+                        .decrypt_last(&buffer[..read_count])
+                        .map_err(|err| anyhow!("Decrypting {}", err))?;
+                    output_file.write(&plaintext)?;
+                    break;
+                }
+            }
+            println!("Decrypted {}", args.file.green());
         }
+
     } else {
         println!(
             "Distribution of ones: {}/{} ({}%)",
@@ -115,7 +147,7 @@ fn main() -> std::io::Result<()> {
         println!(
             "Distribution of < 128: {}/{} ({}%)",
             total_below_128,
-            contents.len(),
+            read_count,
             ascii_ratio * 100.0
         );
     }
