@@ -31,6 +31,14 @@ struct Args {
     /// Nonce
     #[clap(short, long, required = true, value_name = "NONCE")]
     nonce: String,
+
+    /// Force Encryption
+    #[clap(long, conflicts_with = "decrypt")]
+    encrypt: bool,
+
+    /// Force Decryption
+    #[clap(long, conflicts_with = "encrypt")]
+    decrypt: bool,
 }
 
 fn main() -> Result<()> {
@@ -54,7 +62,11 @@ fn main() -> Result<()> {
     let ones_ratio = total_ones as f32 / total_bits as f32;
     let ascii_ratio = total_below_128 as f32 / read_count as f32;
 
-    let encrypt = ascii_ratio >= 0.990;
+    let encrypt = match (args.encrypt, args.decrypt) {
+        (true, false) => true,
+        (false, true) => false,
+        _ => ascii_ratio >= 0.990,
+    };
 
     if !args.predict_only {
         // read in user arguments
