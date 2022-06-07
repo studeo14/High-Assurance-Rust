@@ -10,6 +10,7 @@ use colored::Colorize;
 use std::{
     fs::File,
     io::{Read, Seek, Write},
+    path::{Path, PathBuf},
 };
 /// File en/decryption
 #[derive(Parser, Debug)]
@@ -24,7 +25,7 @@ pub struct Args {
 
     /// Name of file
     #[clap(short, long, value_name = "FILE_NAME", required = true)]
-    pub file: String,
+    pub file: PathBuf,
 
     /// En/Decryption key
     #[clap(short, long, required = true, value_name = "KEY")]
@@ -43,10 +44,88 @@ pub struct Args {
     pub decrypt: bool,
 }
 
-pub fn encrypt_or_decrypt(args: &Args, file: &mut File) -> Result<bool> {
+pub fn process_item(args: &Args, item: &Path) -> Result<()> {
+    if item.is_dir() {
+        process_directory(args, item)
+    } else if item.is_file() {
+        process_file(args, item)
+    } else {
+        Err(anyhow!("{} is neither a path or a file.", item.display()))
+    }
+}
+
+fn process_directory(args: &Args, directory: &Path) -> Result<()> {
+    if !directory.is_dir() {
+        Err(anyhow!("Expected dir, got {}", directory.display()))
+    } else {
+        for item in directory.read_dir()? {
+            let i = item?;
+            process_item(args, i.path().as_path())?
+        }
+        Ok(())
+    }
+}
+
+fn process_file(args: &Args, file: &Path) -> Result<()> {
+    if !file.is_file() {
+        Err(anyhow!("Expected file, got {}", file.display()))
+    } else {
+        encrypt_or_decrypt_file(args, file)
+    }
+}
+
+pub fn encrypt_or_decrypt_file(args: &Args, input_file_name: &Path) -> Result<()> {
+    let encrypt = encrypt_or_decrypt(&args, input_file_name)?;
+
+    // If predict only just return
+    if args.predict_only {
+        return Ok(());
+    }
+
+    // read in user arguments
+    // Note:
+    // Enfore length here
+    if args.key.len() != 32 {
+        return Err(anyhow!("Key must be 32 characters long",));
+    }
+    let key = args.key.as_bytes();
+    let nonce = args.nonce.as_bytes();
+
+    // Overwrite the existing file check
+    let filename = if args.overwrite {
+        println!(
+            "{}; You are overwriting {}",
+            "WARNING".yellow(),
+            args.file.to_str().unwrap().red()
+        );
+        args.file.display().to_string()
+    } else {
+        if encrypt {
+            format!("{}.enc", args.file.display())
+        } else {
+            format!("{}.denc", args.file.display())
+        }
+    };
+
+    println!("Writing result to {}", filename.green());
+
+    let file_path = Path::new(&filename);
+
+    // En/Decrypt the file
+    if encrypt {
+        stream_encrypt(args.file.as_path(), file_path, key, nonce)?;
+    } else {
+        stream_decrypt(args.file.as_path(), file_path, key, nonce)?;
+    }
+
+    Ok(())
+}
+
+pub fn encrypt_or_decrypt(args: &Args, input_file_name: &Path) -> Result<bool> {
+    let mut input_file = File::options().read(true).open(input_file_name)?;
     let mut buffer = [0u8; 500];
     // Read the first chunk of the file
-    let read_count = file.read(&mut buffer)?;
+    let read_count = input_file.read(&mut buffer)?;
     let total_bits = read_count * 8;
     let mut total_ones = 0;
     let mut total_below_128 = 0;
@@ -84,12 +163,17 @@ pub fn encrypt_or_decrypt(args: &Args, file: &mut File) -> Result<bool> {
 }
 
 pub fn stream_encrypt(
-    args: &Args,
-    input_file: &mut File,
-    output_file: &mut File,
+    input_file_name: &Path,
+    output_file_name: &Path,
     key: &[u8],
     nonce: &[u8],
 ) -> Result<()> {
+    let mut input_file = File::options().read(true).open(input_file_name)?;
+    let mut output_file = File::options()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(output_file_name)?;
     // create the cipher instance
     let cipher = ChaCha20Poly1305::new(key.into());
 
@@ -112,17 +196,25 @@ pub fn stream_encrypt(
             break;
         }
     }
-    println!("Encrypted {}", args.file.green());
+    println!(
+        "Encrypted {}",
+        input_file_name.display().to_string().green()
+    );
     Ok(())
 }
 
 pub fn stream_decrypt(
-    args: &Args,
-    input_file: &mut File,
-    output_file: &mut File,
+    input_file_name: &Path,
+    output_file_name: &Path,
     key: &[u8],
     nonce: &[u8],
 ) -> Result<()> {
+    let mut input_file = File::options().read(true).open(input_file_name)?;
+    let mut output_file = File::options()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(output_file_name)?;
     // create the cipher instance
     let cipher = ChaCha20Poly1305::new(key.into());
 
@@ -146,6 +238,9 @@ pub fn stream_decrypt(
         output_file.write(&plaintext)?;
         break;
     }
-    println!("Decrypted {}", args.file.green());
+    println!(
+        "Decrypted {}",
+        input_file_name.display().to_string().green()
+    );
     Ok(())
 }
